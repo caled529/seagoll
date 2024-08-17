@@ -3,29 +3,33 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
 	gloss "github.com/charmbracelet/lipgloss"
 )
 
-func InitialView() tea.Model {
-	return seagollViewer{
-		grid:   &Grid{tileMap: make(map[int]map[int]bool)},
-		paused: true,
+func InitialView(interval time.Duration) tea.Model {
+	sv := seagollViewer{
+		grid: make(map[int]map[int]bool),
 		styleMenu: gloss.NewStyle().
 			Align(gloss.Center),
 		styleView: gloss.NewStyle().
 			Border(gloss.NormalBorder()),
+		timer: timer.NewWithInterval(interval, interval),
 	}
+	sv.timer.Stop()
+	return sv
 }
 
 type seagollViewer struct {
 	cursorX   int
 	cursorY   int
-	grid      *Grid
-	paused    bool
+	grid      Grid
 	styleMenu gloss.Style
 	styleView gloss.Style
+	timer     timer.Model
 	viewportX int
 	viewportY int
 }
@@ -34,6 +38,18 @@ func (sv seagollViewer) Init() tea.Cmd { return nil }
 
 func (sv seagollViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case timer.TickMsg:
+		sv.grid = sv.grid.NextState()
+		var cmd tea.Cmd
+		sv.timer, cmd = sv.timer.Update(msg)
+		sv.timer.Timeout += sv.timer.Interval
+		return sv, cmd
+
+	case timer.StartStopMsg:
+		var cmd tea.Cmd
+		sv.timer, cmd = sv.timer.Update(msg)
+		return sv, cmd
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -63,16 +79,17 @@ func (sv seagollViewer) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sv.cursorX++
 			}
 		case "n":
-			if sv.paused {
-				sv.grid.NextGeneration()
+			if !sv.timer.Running() {
+				sv.grid = sv.grid.NextState()
 			}
 		case "enter":
-			if sv.paused {
+			if !sv.timer.Running() {
 				sv.grid.ToggleAt(sv.viewportX+sv.cursorX, sv.viewportY+sv.cursorY)
 			}
 		case " ":
-			sv.paused = !sv.paused
+			return sv, sv.timer.Toggle()
 		}
+
 	case tea.WindowSizeMsg:
 		sv.styleMenu = sv.styleMenu.
 			Width(msg.Width)
@@ -99,7 +116,7 @@ func (sv seagollViewer) View() string {
 	gridView := strings.Split(sv.grid.BoundedView(sv.viewportX, sv.viewportY,
 		sv.styleView.GetWidth()/2, sv.styleView.GetHeight()), "\n")
 	cursorText := "❱❰"
-	if sv.grid.IsAliveAt(sv.viewportX+sv.cursorX, sv.viewportY+sv.cursorY) {
+	if sv.grid.IsAlive(sv.viewportX+sv.cursorX, sv.viewportY+sv.cursorY) {
 		cursorText = gloss.NewStyle().
 			Background(gloss.Color("8")).
 			Render(cursorText)
@@ -109,7 +126,7 @@ func (sv seagollViewer) View() string {
 		gridView[sv.cursorY] = string(cursorLine[:sv.cursorX*2]) + cursorText + string(cursorLine[(sv.cursorX+1)*2:])
 	}
 	s += "\n" + sv.styleView.Render(strings.Join(gridView, "\n"))
-	if sv.paused {
+	if !sv.timer.Running() {
 		s += sv.styleMenu.Render("\n(Press Spacebar to Run)    (Press Enter to toggle a tile)\n(Use ←↓↑→ (or hjkl) to move the cursor)  (Press n to advance)")
 	} else {
 		s += sv.styleMenu.Render("\n(Press Spacebar to Pause)\n(Use ←↓↑→ (or hjkl) to move the cursor)")
